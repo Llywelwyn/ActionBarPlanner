@@ -1,0 +1,5 @@
+package-as: ActionBarPlanner
+
+ignore:
+  - db2cache
+  - gen_data.py

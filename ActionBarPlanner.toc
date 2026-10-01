@@ -1,0 +1,13 @@
+## Interface: 16001
+## Title: Action Bar Planner
+## Notes: Plan your max-level action bars before you get there. Open with /abp or the minimap button.
+## Author: Lly
+## Version: 2.1.0
+## IconTexture: Interface\Icons\INV_Misc_Book_09
+## AddonCompartmentFunc: ActionBarPlanner_CompartmentClick
+## SavedVariablesPerCharacter: ActionBarPlannerDB
+## X-Website: https://github.com/Llywelwyn/ActionBarPlanner
+## X-Category: Action Bars
+
+Data.lua
+ActionBarPlanner.lua
