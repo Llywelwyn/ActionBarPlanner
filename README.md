@@ -8,12 +8,11 @@ Action Bar Planner is used for planning out binds. It shows all the abilities yo
 
 ![image](https://media.forgecdn.net/attachments/description/null/description_924082c7-4966-4768-b14b-222aaa8072a3.png)
 
-- `Auto-place` will automatically place spells in the correct spots on your action bars when you learn new abilities, at max rank or at a specific rank you've pinned (e.g. rank 1 Frostbolt).
+- `Auto-place` will automatically place spells in the correct spots on your action bars when you learn new abilities, at max rank or at a specific rank you've pinned (e.g. rank 1).
 - `Preview` shows you a preview of your planned abilities on your action bar.
 - `Keybinds` allows quick-keybinding from within the addon, and shows a list of keyboard buttons and what they're currently assigned to, and which ones are currently free.
-- `Share` exports the plan as text, and imports plans from others.
 
-Plans are saved per character. `/abp preview` and `/abp minimap` toggle the overlay and the minimap button.
+Plans are saved per character, but can be exported/imported with the share button.
 
 ## Data
 
