@@ -76,7 +76,7 @@ end
 local db
 local classSpells = {}
 local heldEntry, heldKey
-local frame, cursorFrame, paletteRows, slotButtons, rankMenu, hiddenBtn, searchText
+local frame, cursorFrame, paletteRows, slotButtons, rankMenu, hiddenBtn, searchText, placeMenu
 local keysFrame, keysRows
 local shareFrame, pendingImport
 local unplannedOnly = false
@@ -676,11 +676,7 @@ local function QueueRefresh()
 	end)
 end
 
-local function ApplySlot(slot)
-	local e = db.plan[slot]
-	if not e or EntryMatchesSlot(e, slot) then
-		return false
-	end
+local function PlaceEntry(e, slot)
 	if e.t == "spell" then
 		local target = ResolveSpell(e)
 		if not target then
@@ -705,6 +701,150 @@ local function ApplySlot(slot)
 	end
 	ClearCursor()
 	return false
+end
+
+local function ApplySlot(slot)
+	local e = db.plan[slot]
+	if not e or EntryMatchesSlot(e, slot) then
+		return false
+	end
+	return PlaceEntry(e, slot)
+end
+
+local function ClearSlot(slot)
+	if not HasAction(slot) then
+		return false
+	end
+	PickupAction(slot)
+	ClearCursor()
+	return true
+end
+
+local function CanPlace(e)
+	if e.t == "spell" then
+		return ResolveSpell(e) ~= nil
+	elseif e.t == "item" then
+		local count = (C_Item and C_Item.GetItemCount or GetItemCount)(e.id)
+		return count and count > 0
+	elseif e.t == "macro" then
+		return FindMacroIndex(e) ~= nil
+	end
+end
+
+local function SlotHolds(e, slot)
+	if e.t == "spell" then
+		local actionType, id = GetActionInfo(slot)
+		return actionType == "spell" and id and GetName(id) == GetName(e.id)
+	end
+	return EntryMatchesSlot(e, slot)
+end
+
+local function IsPlannedAnywhere(slot)
+	for _, e in pairs(db.plan) do
+		if SlotHolds(e, slot) then
+			return true
+		end
+	end
+	return false
+end
+
+local function PlanReplace()
+	local places, clears = {}, {}
+	for _, bar in ipairs(BARS) do
+		for i = 1, 12 do
+			local slot = bar.offset + i
+			local e = db.plan[slot]
+			if e then
+				if not EntryMatchesSlot(e, slot) then
+					if CanPlace(e) then
+						tinsert(places, slot)
+					elseif HasAction(slot) then
+						tinsert(clears, slot)
+					end
+				end
+			elseif HasAction(slot) and IsPlannedAnywhere(slot) then
+				tinsert(clears, slot)
+			end
+		end
+	end
+	return places, clears
+end
+
+local function ReadSlot(slot)
+	local actionType, id = GetActionInfo(slot)
+	if actionType == "spell" and id and id > 0 then
+		return {t = "spell", id = id, exact = true}
+	elseif actionType == "item" and id and id > 0 then
+		return {t = "item", id = id}
+	elseif actionType == "macro" then
+		local name, icon, body
+		if id and id > 0 then
+			name, icon, body = GetMacroInfo(id)
+		end
+		if not name then
+			name = GetActionText(slot)
+			icon = GetActionTexture(slot)
+		end
+		if name then
+			return {t = "macro", name = name, icon = icon, body = body}
+		end
+	end
+end
+
+local function ReplaceBars()
+	if InCombatLockdown() then
+		Print("Can't rearrange bars in combat.")
+		return
+	end
+	local places, clears = PlanReplace()
+	local snapshot = {}
+	for _, bar in ipairs(BARS) do
+		for i = 1, 12 do
+			local slot = bar.offset + i
+			local e = ReadSlot(slot)
+			if e then
+				snapshot[slot] = e
+			elseif not HasAction(slot) then
+				snapshot[slot] = false
+			end
+		end
+	end
+	db.snapshot = snapshot
+	local cleared, placed = 0, 0
+	for _, slot in ipairs(clears) do
+		if ClearSlot(slot) then
+			cleared = cleared + 1
+		end
+	end
+	for _, slot in ipairs(places) do
+		if ApplySlot(slot) then
+			placed = placed + 1
+		end
+	end
+	Print(("Bars replaced (%d placed, %d cleared)."):format(placed, cleared))
+	QueueRefresh()
+end
+
+local function UndoReplace()
+	if not db.snapshot then
+		return
+	end
+	if InCombatLockdown() then
+		Print("Can't rearrange bars in combat.")
+		return
+	end
+	for slot, e in pairs(db.snapshot) do
+		if e then
+			if not EntryMatchesSlot(e, slot) then
+				PlaceEntry(e, slot)
+			end
+		else
+			ClearSlot(slot)
+		end
+	end
+	db.snapshot = nil
+	Print("Bars restored.")
+	QueueRefresh()
 end
 
 local function ApplyAll(silent)
@@ -753,26 +893,9 @@ local function ImportCurrentBars()
 	for _, bar in ipairs(BARS) do
 		for i = 1, 12 do
 			local slot = bar.offset + i
-			local actionType, id = GetActionInfo(slot)
-			local e
-			if actionType == "spell" and id and id > 0 then
-				e = {t = "spell", id = id}
-			elseif actionType == "item" and id and id > 0 then
-				e = {t = "item", id = id}
-			elseif actionType == "macro" then
-				local name, icon, body
-				if id and id > 0 then
-					name, icon, body = GetMacroInfo(id)
-				end
-				if not name then
-					name = GetActionText(slot)
-					icon = GetActionTexture(slot)
-				end
-				if name then
-					e = {t = "macro", name = name, icon = icon, body = body}
-				end
-			end
+			local e = ReadSlot(slot)
 			if e then
+				e.exact = nil
 				db.plan[slot] = e
 				imported = imported + 1
 			end
@@ -924,6 +1047,18 @@ StaticPopupDialogs["ACTIONBARPLANNER_IMPORTPLAN"] = {
 			Print("Plan imported.")
 			RefreshUI()
 		end
+	end,
+	timeout = 0,
+	whileDead = true,
+	hideOnEscape = true,
+}
+
+StaticPopupDialogs["ACTIONBARPLANNER_REPLACE"] = {
+	text = "Replace your action bars with your plan?\n\n%s",
+	button1 = YES,
+	button2 = NO,
+	OnAccept = function()
+		ReplaceBars()
 	end,
 	timeout = 0,
 	whileDead = true,
@@ -1207,6 +1342,7 @@ local function BuildUI()
 			SetHeldEntry(nil)
 		end
 		rankMenu:Hide()
+		placeMenu:Hide()
 	end)
 	frame:SetScript("OnShow", function()
 		RefreshLayout()
@@ -1214,6 +1350,7 @@ local function BuildUI()
 	end)
 	frame:SetScript("OnHide", function()
 		SetHeldEntry(nil)
+		placeMenu:Hide()
 	end)
 	tinsert(UISpecialFrames, "ActionBarPlannerFrame")
 
@@ -1247,11 +1384,94 @@ local function BuildUI()
 	importBtn:SetScript("OnClick", ImportCurrentBars)
 
 	local placeBtn = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
-	placeBtn:SetSize(105, 22)
+	placeBtn:SetSize(120, 22)
 	placeBtn:SetPoint("LEFT", importBtn, "RIGHT", 5, 0)
 	placeBtn:SetText("Place Learned")
+	placeBtn:GetFontString():SetPoint("CENTER", -6, 0)
+	local placeArrow = placeBtn:CreateTexture(nil, "OVERLAY")
+	placeArrow:SetSize(12, 6)
+	placeArrow:SetPoint("RIGHT", -8, 0)
+	placeArrow:SetTexture("Interface\\Buttons\\Arrow-Down-Up")
+	placeArrow:SetTexCoord(0, 1, 0, 0.5)
+
+	placeMenu = CreateFrame("Frame", nil, frame, "BackdropTemplate")
+	placeMenu:SetFrameStrata("DIALOG")
+	placeMenu:SetPoint("TOPLEFT", placeBtn, "BOTTOMLEFT", -6, 0)
+	placeMenu:SetBackdrop({
+		bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
+		edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+		edgeSize = 16,
+		insets = {left = 4, right = 4, top = 4, bottom = 4},
+	})
+	placeMenu:SetBackdropColor(0, 0, 0, 0.9)
+	placeMenu:Hide()
+
+	local menuItems = {
+		{
+			label = "Place Learned",
+			tip = "Place spells into their planned slots.",
+			run = function()
+				ApplyAll(false)
+			end,
+		},
+		{
+			label = "Replace Bars",
+			tip = "Replace your action bars with your plan.",
+			run = function()
+				if InCombatLockdown() then
+					Print("Can't rearrange bars in combat.")
+					return
+				end
+				local places, clears = PlanReplace()
+				if #places == 0 and #clears == 0 then
+					Print("Your bars already match your plan.")
+					return
+				end
+				StaticPopup_Show("ACTIONBARPLANNER_REPLACE", ("%d to place, %d to clear."):format(#places, #clears))
+			end,
+		},
+		{
+			label = "Undo",
+			tip = "Undoes the last change to your bars.",
+			enabled = function()
+				return db.snapshot ~= nil
+			end,
+			run = UndoReplace,
+		},
+	}
+	placeMenu.items = {}
+	for i, def in ipairs(menuItems) do
+		local item = CreateFrame("Button", nil, placeMenu, "UIPanelButtonTemplate")
+		item:SetSize(placeBtn:GetWidth(), 22)
+		item:SetPoint("TOPLEFT", 6, -6 - (i - 1) * 24)
+		item:SetText(def.label)
+		item:SetMotionScriptsWhileDisabled(true)
+		item.def = def
+		item:SetScript("OnClick", function()
+			placeMenu:Hide()
+			def.run()
+		end)
+		item:SetScript("OnEnter", function(self)
+			GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+			GameTooltip:SetText(def.label)
+			GameTooltip:AddLine(def.tip, 0.8, 0.8, 0.8)
+			GameTooltip:Show()
+		end)
+		item:SetScript("OnLeave", function()
+			GameTooltip:Hide()
+		end)
+		placeMenu.items[i] = item
+	end
+	placeMenu:SetSize(placeBtn:GetWidth() + 12, #menuItems * 24 + 10)
+	placeMenu:SetScript("OnShow", function()
+		for _, item in ipairs(placeMenu.items) do
+			item:SetEnabled(not item.def.enabled or item.def.enabled())
+		end
+	end)
+
 	placeBtn:SetScript("OnClick", function()
-		ApplyAll(false)
+		rankMenu:Hide()
+		placeMenu:SetShown(not placeMenu:IsShown())
 	end)
 
 	local clearBtn = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
@@ -1695,7 +1915,8 @@ events:SetScript("OnEvent", function(_, event, arg1)
 		CreateMinimapButton()
 		CreateOptionsPanel()
 		UpdatePreview()
-		Print("Loaded — type /abp to plan your bars, /abp preview to toggle the on-bar preview.")
+		local version = (C_AddOns and C_AddOns.GetAddOnMetadata or GetAddOnMetadata)(ADDON_NAME, "Version")
+		Print("v" .. version .. " (/abp)")
 	elseif event == "LEARNED_SPELL_IN_SKILL_LINE" then
 		if db and db.autoPlace and arg1 then
 			AutoPlaceLearned(arg1)
