@@ -600,8 +600,20 @@ local function RefreshLayout()
 	if not frame then
 		return
 	end
-	local shown = 0
+	local order = {}
+	for idx = #BARS, 1, -1 do
+		if not BARS[idx].form then
+			tinsert(order, idx)
+		end
+	end
 	for idx, bar in ipairs(BARS) do
+		if bar.form then
+			tinsert(order, idx)
+		end
+	end
+	local shown = 0
+	for _, idx in ipairs(order) do
+		local bar = BARS[idx]
 		local row = barRows[idx]
 		if IsBarEnabled(bar) then
 			shown = shown + 1
