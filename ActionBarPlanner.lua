@@ -1375,6 +1375,7 @@ end
 
 local function BuildUI()
 	frame = CreateFrame("Frame", "ActionBarPlannerFrame", UIParent, "BasicFrameTemplateWithInset")
+	frame:Hide()
 	local gridWidth = 12 * (SLOT_SIZE + SLOT_GAP) - SLOT_GAP
 	frame:SetSize(100 + gridWidth + PALETTE_WIDTH + 60, 60 + #BARS * (SLOT_SIZE + ROW_GAP) + 60)
 	frame:SetPoint("CENTER")
