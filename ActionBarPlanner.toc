@@ -5,6 +5,7 @@
 ## Version: 2.3.0
 ## IconTexture: Interface\Icons\INV_Misc_Book_09
 ## AddonCompartmentFunc: ActionBarPlanner_CompartmentClick
+## SavedVariables: ActionBarPlannerAccount
 ## SavedVariablesPerCharacter: ActionBarPlannerDB
 ## X-Website: https://github.com/Llywelwyn/ActionBarPlanner
 ## X-Category: Action Bars

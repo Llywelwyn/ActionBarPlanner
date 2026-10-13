@@ -87,10 +87,10 @@ local function IsKnown(id)
 		or C_SpellBook.IsSpellInSpellBook(id, Enum.SpellBookSpellBank.Player, false)
 end
 
-local db
+local db, account, plan
 local classSpells = {}
 local heldEntry, heldKey
-local frame, cursorFrame, paletteRows, slotButtons, rankMenu, hiddenBtn, searchText, placeMenu
+local frame, cursorFrame, paletteRows, slotButtons, rankMenu, hiddenBtn, searchText, placeMenu, profileMenu
 local keysFrame, keysRows
 local shareFrame, pendingImport
 local unplannedOnly = false
@@ -357,7 +357,7 @@ local function PaletteEntries()
 		end
 	end
 	local planned = {}
-	for _, pe in pairs(db.plan) do
+	for _, pe in pairs(plan) do
 		if pe.t == "spell" then
 			local n = GetName(pe.id)
 			if n then
@@ -440,7 +440,7 @@ local function UpdatePreview()
 		local visible = bar.binding ~= "ACTIONBUTTON%d" or bar.offset == mainOffset
 		for i = 1, 12 do
 			local slot = bar.offset + i
-			local e = visible and db.plan[slot]
+			local e = visible and plan[slot]
 			local differs = db.preview and e and not EntryMatchesSlot(e, slot)
 			local match = db.preview and e and MatchesSearch(e)
 			local ov = overlays[slot]
@@ -633,13 +633,14 @@ local function RefreshUI()
 		return
 	end
 
+	frame.title:SetText("Action Bar Planner — " .. account.profiles[db.profile].name)
 	frame.autoCheck:SetChecked(db.autoPlace and true or false)
 	frame.previewCheck:SetChecked(db.preview and true or false)
 
 	for _, btn in ipairs(slotButtons) do
 		local bind = BindText(btn.bindingCmd)
 		btn.hotkey:SetText(bind)
-		local e = db.plan[btn.slot]
+		local e = plan[btn.slot]
 		btn.level:SetText("")
 		btn.rank:SetText("")
 		btn.glow:SetShown(e and MatchesSearch(e) or false)
@@ -750,7 +751,7 @@ local function PlaceEntry(e, slot)
 end
 
 local function ApplySlot(slot)
-	local e = db.plan[slot]
+	local e = plan[slot]
 	if not e or EntryMatchesSlot(e, slot) then
 		return false
 	end
@@ -786,7 +787,7 @@ local function SlotHolds(e, slot)
 end
 
 local function IsPlannedAnywhere(slot)
-	for _, e in pairs(db.plan) do
+	for _, e in pairs(plan) do
 		if SlotHolds(e, slot) then
 			return true
 		end
@@ -799,7 +800,7 @@ local function PlanReplace()
 	for _, bar in ipairs(BARS) do
 		for i = 1, 12 do
 			local slot = bar.offset + i
-			local e = db.plan[slot]
+			local e = plan[slot]
 			if e then
 				if not EntryMatchesSlot(e, slot) then
 					if CanPlace(e) then
@@ -928,7 +929,7 @@ local function AutoPlaceLearned(spellId)
 	if not name then
 		return
 	end
-	for slot, e in pairs(db.plan) do
+	for slot, e in pairs(plan) do
 		if e.t == "spell" and GetName(e.id) == name then
 			if InCombatLockdown() then
 				applyQueued = true
@@ -941,6 +942,7 @@ local function AutoPlaceLearned(spellId)
 end
 
 local function ImportCurrentBars()
+	wipe(plan)
 	local imported = 0
 	for _, bar in ipairs(BARS) do
 		for i = 1, 12 do
@@ -948,7 +950,7 @@ local function ImportCurrentBars()
 			local e = ReadSlot(slot)
 			if e then
 				e.exact = nil
-				db.plan[slot] = e
+				plan[slot] = e
 				imported = imported + 1
 			end
 		end
@@ -1012,12 +1014,12 @@ local EXPORT_HEADER = "ActionBarPlanner:v1"
 local function ExportPlan()
 	local lines = {EXPORT_HEADER}
 	local slots = {}
-	for slot in pairs(db.plan) do
+	for slot in pairs(plan) do
 		tinsert(slots, slot)
 	end
 	sort(slots)
 	for _, slot in ipairs(slots) do
-		local e = db.plan[slot]
+		local e = plan[slot]
 		if e.t == "spell" then
 			tinsert(lines, slot .. " spell " .. e.id .. (e.exact and " x" or ""))
 		elseif e.t == "item" then
@@ -1086,14 +1088,14 @@ local function ParsePlan(text)
 end
 
 StaticPopupDialogs["ACTIONBARPLANNER_IMPORTPLAN"] = {
-	text = "Replace the current plan with %s imported action(s)?",
+	text = "Replace this profile's plan with %s imported action(s)?",
 	button1 = YES,
 	button2 = NO,
 	OnAccept = function()
 		if pendingImport then
-			wipe(db.plan)
+			wipe(plan)
 			for slot, e in pairs(pendingImport) do
-				db.plan[slot] = e
+				plan[slot] = e
 			end
 			pendingImport = nil
 			Print("Plan imported.")
@@ -1118,17 +1120,311 @@ StaticPopupDialogs["ACTIONBARPLANNER_REPLACE"] = {
 }
 
 StaticPopupDialogs["ACTIONBARPLANNER_CLEAR"] = {
-	text = "Clear the entire action bar plan for this character?",
+	text = "Clear the entire plan for this profile?",
 	button1 = YES,
 	button2 = NO,
 	OnAccept = function()
-		wipe(db.plan)
+		wipe(plan)
 		RefreshUI()
 	end,
 	timeout = 0,
 	whileDead = true,
 	hideOnEscape = true,
 }
+
+local function PlayerClass()
+	local _, class = UnitClass("player")
+	return class
+end
+
+local function ClassProfiles()
+	local list = {}
+	for id, p in pairs(account.profiles) do
+		if p.class == PlayerClass() then
+			tinsert(list, id)
+		end
+	end
+	table.sort(list, function(a, b)
+		return account.profiles[a].name:lower() < account.profiles[b].name:lower()
+	end)
+	return list
+end
+
+local function UniqueName(base, except)
+	local name, n = base, 1
+	local taken = true
+	while taken do
+		taken = false
+		for _, id in ipairs(ClassProfiles()) do
+			if id ~= except and account.profiles[id].name == name then
+				taken = true
+			end
+		end
+		if taken then
+			n = n + 1
+			name = base .. " " .. n
+		end
+	end
+	return name
+end
+
+local function NewProfile(name, entries)
+	local id = account.nextId
+	account.nextId = id + 1
+	account.profiles[id] = {name = UniqueName(name), class = PlayerClass(), plan = entries or {}}
+	return id
+end
+
+local function UseProfile(id)
+	db.profile = id
+	plan = account.profiles[id].plan
+end
+
+local function SwitchProfile(id)
+	UseProfile(id)
+	SetHeldEntry(nil)
+	RefreshUI()
+end
+
+local function DeleteProfile(id)
+	account.profiles[id] = nil
+	if id == db.profile then
+		SwitchProfile(ClassProfiles()[1] or NewProfile(UnitName("player")))
+	end
+end
+
+local function SetupProfiles()
+	ActionBarPlannerAccount = ActionBarPlannerAccount or {}
+	account = ActionBarPlannerAccount
+	account.nextId = account.nextId or 1
+	account.profiles = account.profiles or {}
+	if db.profile and account.profiles[db.profile] then
+		UseProfile(db.profile)
+	else
+		local legacy = db.plan
+		if legacy then
+			for slot, e in pairs(legacy) do
+				if type(e) == "number" then
+					legacy[slot] = {t = "spell", id = e}
+				end
+			end
+		end
+		UseProfile(NewProfile(UnitName("player"), legacy))
+	end
+	db.plan = nil
+end
+
+local function PopupEditBox(popup)
+	return popup.editBox or popup.EditBox or (popup.GetEditBox and popup:GetEditBox())
+end
+
+local function NamePopup(text, onName)
+	return {
+		text = text,
+		button1 = ACCEPT,
+		button2 = CANCEL,
+		hasEditBox = true,
+		maxLetters = 40,
+		OnShow = function(self, data)
+			data = data or self.data
+			local box = PopupEditBox(self)
+			box:SetText(data and data.default or "")
+			box:HighlightText()
+			box:SetFocus()
+		end,
+		OnAccept = function(self)
+			onName(strtrim(PopupEditBox(self):GetText()))
+		end,
+		EditBoxOnEnterPressed = function(self)
+			onName(strtrim(self:GetText()))
+			self:GetParent():Hide()
+		end,
+		EditBoxOnEscapePressed = function(self)
+			self:GetParent():Hide()
+		end,
+		timeout = 0,
+		whileDead = true,
+		hideOnEscape = true,
+	}
+end
+
+StaticPopupDialogs["ACTIONBARPLANNER_NEWPROFILE"] = NamePopup("Name for the new profile:", function(name)
+	if name ~= "" then
+		SwitchProfile(NewProfile(name))
+	end
+end)
+
+StaticPopupDialogs["ACTIONBARPLANNER_IMPORTNEW"] = NamePopup("Name for the imported profile:", function(name)
+	if name ~= "" and pendingImport then
+		local entries = pendingImport
+		pendingImport = nil
+		SwitchProfile(NewProfile(name, entries))
+		Print("Plan imported.")
+	end
+end)
+
+StaticPopupDialogs["ACTIONBARPLANNER_IMPORTBARS"] = {
+	text = "Overwrite this profile with what's on your bars?",
+	button1 = YES,
+	button2 = NO,
+	OnAccept = function()
+		ImportCurrentBars()
+	end,
+	timeout = 0,
+	whileDead = true,
+	hideOnEscape = true,
+}
+
+StaticPopupDialogs["ACTIONBARPLANNER_RENAMEPROFILE"] = NamePopup("Rename this profile:", function(name)
+	if name ~= "" then
+		account.profiles[db.profile].name = UniqueName(name, db.profile)
+		RefreshUI()
+	end
+end)
+
+StaticPopupDialogs["ACTIONBARPLANNER_DELETEPROFILE"] = {
+	text = "Delete the profile \"%s\"?",
+	button1 = YES,
+	button2 = NO,
+	OnAccept = function()
+		DeleteProfile(db.profile)
+	end,
+	timeout = 0,
+	whileDead = true,
+	hideOnEscape = true,
+}
+
+local function CreateStackMenu()
+	local menu = CreateFrame("Frame", nil, frame, "BackdropTemplate")
+	menu:SetFrameStrata("DIALOG")
+	menu:SetBackdrop({
+		bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
+		edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+		edgeSize = 16,
+		insets = {left = 4, right = 4, top = 4, bottom = 4},
+	})
+	menu:SetBackdropColor(0, 0, 0, 0.9)
+	menu.buttons = {}
+	menu:Hide()
+	return menu
+end
+
+local function OpenStackMenu(menu, anchor, defs, width)
+	width = width or anchor:GetWidth()
+	local y = -6
+	for i, def in ipairs(defs) do
+		local btn = menu.buttons[i]
+		if not btn then
+			btn = CreateFrame("Button", nil, menu, "UIPanelButtonTemplate")
+			btn:SetMotionScriptsWhileDisabled(true)
+			btn:SetScript("OnClick", function(self)
+				menu:Hide()
+				self.def.run()
+			end)
+			btn:SetScript("OnEnter", function(self)
+				if not self.def.tip then
+					return
+				end
+				GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+				GameTooltip:SetText(self.def.label)
+				GameTooltip:AddLine(self.def.tip, 0.8, 0.8, 0.8)
+				GameTooltip:Show()
+			end)
+			btn:SetScript("OnLeave", function()
+				GameTooltip:Hide()
+			end)
+			menu.buttons[i] = btn
+		end
+		btn.def = def
+		if def.gap and i > 1 then
+			y = y - 8
+		end
+		btn:ClearAllPoints()
+		btn:SetPoint("TOPLEFT", 6, y)
+		y = y - 24
+		btn:SetSize(width, 22)
+		btn:SetText(def.label)
+		btn:SetEnabled(not def.enabled or def.enabled())
+		if def.current then
+			btn:LockHighlight()
+		else
+			btn:UnlockHighlight()
+		end
+		btn:Show()
+	end
+	for i = #defs + 1, #menu.buttons do
+		menu.buttons[i]:Hide()
+	end
+	menu:ClearAllPoints()
+	menu:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", -6, 0)
+	menu:SetSize(width + 12, -y + 4)
+	menu:Show()
+end
+
+local function ToggleStackMenu(menu, anchor, defs, width)
+	if menu:IsShown() then
+		menu:Hide()
+		return
+	end
+	rankMenu:Hide()
+	placeMenu:Hide()
+	profileMenu:Hide()
+	OpenStackMenu(menu, anchor, type(defs) == "function" and defs() or defs, width)
+end
+
+local function AddDropArrow(btn)
+	btn:GetFontString():SetPoint("CENTER", -6, 0)
+	local arrow = btn:CreateTexture(nil, "OVERLAY")
+	arrow:SetSize(12, 6)
+	arrow:SetPoint("RIGHT", -8, 0)
+	arrow:SetTexture("Interface\\Buttons\\Arrow-Down-Up")
+	arrow:SetTexCoord(0, 1, 0, 0.5)
+end
+
+local function ProfileMenuItems()
+	local items = {}
+	for _, id in ipairs(ClassProfiles()) do
+		tinsert(items, {
+			label = account.profiles[id].name,
+			current = id == db.profile,
+			run = function()
+				SwitchProfile(id)
+			end,
+		})
+	end
+	tinsert(items, {
+		label = "New Profile",
+		gap = true,
+		run = function()
+			StaticPopup_Show("ACTIONBARPLANNER_NEWPROFILE", nil, nil, {default = UniqueName(UnitName("player"))})
+		end,
+	})
+	tinsert(items, {
+		label = "Import from Bars",
+		run = function()
+			StaticPopup_Show("ACTIONBARPLANNER_IMPORTBARS")
+		end,
+	})
+	tinsert(items, {
+		label = "Share",
+		run = function()
+			shareFrame:SetShown(not shareFrame:IsShown())
+		end,
+	})
+	tinsert(items, {
+		label = "Rename",
+		run = function()
+			StaticPopup_Show("ACTIONBARPLANNER_RENAMEPROFILE", nil, nil, {default = account.profiles[db.profile].name})
+		end,
+	})
+	tinsert(items, {
+		label = "Delete",
+		run = function()
+			StaticPopup_Show("ACTIONBARPLANNER_DELETEPROFILE", account.profiles[db.profile].name)
+		end,
+	})
+	return items
+end
 
 local function PlaceGameCursor(slot)
 	local cursorType, a, b, c = GetCursorInfo()
@@ -1153,7 +1449,7 @@ local function PlaceGameCursor(slot)
 		end
 	end
 	if e then
-		db.plan[slot] = e
+		plan[slot] = e
 		PlayUISound("IG_ABILITY_ICON_DROP")
 	end
 	ClearCursor()
@@ -1198,17 +1494,17 @@ local function SlotOnClick(btn, mouseButton)
 		if heldEntry then
 			SetHeldEntry(nil)
 		else
-			db.plan[btn.slot] = nil
+			plan[btn.slot] = nil
 		end
 	else
 		if heldEntry then
-			local previous = db.plan[btn.slot]
-			db.plan[btn.slot] = heldEntry
+			local previous = plan[btn.slot]
+			plan[btn.slot] = heldEntry
 			PlayUISound("IG_ABILITY_ICON_DROP")
 			SetHeldEntry(previous)
-		elseif db.plan[btn.slot] then
-			SetHeldEntry(db.plan[btn.slot])
-			db.plan[btn.slot] = nil
+		elseif plan[btn.slot] then
+			SetHeldEntry(plan[btn.slot])
+			plan[btn.slot] = nil
 			PlayUISound("IG_ABILITY_ICON_PICKUP")
 		end
 	end
@@ -1220,7 +1516,7 @@ end
 
 local function SlotOnEnter(btn)
 	GameTooltip:SetOwner(btn, "ANCHOR_RIGHT")
-	local e = db.plan[btn.slot]
+	local e = plan[btn.slot]
 	if e then
 		if e.t == "spell" then
 			GameTooltip:SetSpellByID(e.id)
@@ -1396,6 +1692,7 @@ local function BuildUI()
 		end
 		rankMenu:Hide()
 		placeMenu:Hide()
+		profileMenu:Hide()
 	end)
 	frame:SetScript("OnShow", function()
 		RefreshLayout()
@@ -1404,12 +1701,13 @@ local function BuildUI()
 	frame:SetScript("OnHide", function()
 		SetHeldEntry(nil)
 		placeMenu:Hide()
+		profileMenu:Hide()
 	end)
 	tinsert(UISpecialFrames, "ActionBarPlannerFrame")
 
 	local title = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
 	title:SetPoint("TOP", 0, -5)
-	title:SetText("Action Bar Planner — " .. UnitName("player"))
+	frame.title = title
 
 	slotButtons = {}
 	for barIndex, bar in ipairs(BARS) do
@@ -1430,34 +1728,21 @@ local function BuildUI()
 	end
 	RefreshLayout()
 
-	local importBtn = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
-	importBtn:SetSize(95, 22)
-	importBtn:SetPoint("BOTTOMLEFT", 12, 14)
-	importBtn:SetText("Import Bars")
-	importBtn:SetScript("OnClick", ImportCurrentBars)
+	local profileBtn = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+	profileBtn:SetSize(95, 22)
+	profileBtn:SetPoint("BOTTOMLEFT", 12, 14)
+	profileBtn:SetText("Profiles")
+	AddDropArrow(profileBtn)
+	profileMenu = CreateStackMenu()
+	profileBtn:SetScript("OnClick", function()
+		ToggleStackMenu(profileMenu, profileBtn, ProfileMenuItems, 160)
+	end)
 
 	local placeBtn = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
 	placeBtn:SetSize(120, 22)
-	placeBtn:SetPoint("LEFT", importBtn, "RIGHT", 5, 0)
+	placeBtn:SetPoint("LEFT", profileBtn, "RIGHT", 5, 0)
 	placeBtn:SetText("Place Learned")
-	placeBtn:GetFontString():SetPoint("CENTER", -6, 0)
-	local placeArrow = placeBtn:CreateTexture(nil, "OVERLAY")
-	placeArrow:SetSize(12, 6)
-	placeArrow:SetPoint("RIGHT", -8, 0)
-	placeArrow:SetTexture("Interface\\Buttons\\Arrow-Down-Up")
-	placeArrow:SetTexCoord(0, 1, 0, 0.5)
-
-	placeMenu = CreateFrame("Frame", nil, frame, "BackdropTemplate")
-	placeMenu:SetFrameStrata("DIALOG")
-	placeMenu:SetPoint("TOPLEFT", placeBtn, "BOTTOMLEFT", -6, 0)
-	placeMenu:SetBackdrop({
-		bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
-		edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
-		edgeSize = 16,
-		insets = {left = 4, right = 4, top = 4, bottom = 4},
-	})
-	placeMenu:SetBackdropColor(0, 0, 0, 0.9)
-	placeMenu:Hide()
+	AddDropArrow(placeBtn)
 
 	local menuItems = {
 		{
@@ -1492,39 +1777,9 @@ local function BuildUI()
 			run = UndoBars,
 		},
 	}
-	placeMenu.items = {}
-	for i, def in ipairs(menuItems) do
-		local item = CreateFrame("Button", nil, placeMenu, "UIPanelButtonTemplate")
-		item:SetSize(placeBtn:GetWidth(), 22)
-		item:SetPoint("TOPLEFT", 6, -6 - (i - 1) * 24)
-		item:SetText(def.label)
-		item:SetMotionScriptsWhileDisabled(true)
-		item.def = def
-		item:SetScript("OnClick", function()
-			placeMenu:Hide()
-			def.run()
-		end)
-		item:SetScript("OnEnter", function(self)
-			GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-			GameTooltip:SetText(def.label)
-			GameTooltip:AddLine(def.tip, 0.8, 0.8, 0.8)
-			GameTooltip:Show()
-		end)
-		item:SetScript("OnLeave", function()
-			GameTooltip:Hide()
-		end)
-		placeMenu.items[i] = item
-	end
-	placeMenu:SetSize(placeBtn:GetWidth() + 12, #menuItems * 24 + 10)
-	placeMenu:SetScript("OnShow", function()
-		for _, item in ipairs(placeMenu.items) do
-			item:SetEnabled(not item.def.enabled or item.def.enabled())
-		end
-	end)
-
+	placeMenu = CreateStackMenu()
 	placeBtn:SetScript("OnClick", function()
-		rankMenu:Hide()
-		placeMenu:SetShown(not placeMenu:IsShown())
+		ToggleStackMenu(placeMenu, placeBtn, menuItems)
 	end)
 
 	local clearBtn = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
@@ -1566,14 +1821,6 @@ local function BuildUI()
 	keysBtn:SetText("Keybinds")
 	keysBtn:SetScript("OnClick", function()
 		keysFrame:SetShown(not keysFrame:IsShown())
-	end)
-
-	local shareBtn = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
-	shareBtn:SetSize(55, 22)
-	shareBtn:SetPoint("LEFT", keysBtn, "RIGHT", 5, 0)
-	shareBtn:SetText("Share")
-	shareBtn:SetScript("OnClick", function()
-		shareFrame:SetShown(not shareFrame:IsShown())
 	end)
 
 	local search = CreateFrame("EditBox", nil, frame, "InputBoxTemplate")
@@ -1702,7 +1949,7 @@ local function BuildUI()
 
 	local shareScroll = CreateFrame("ScrollFrame", "ActionBarPlannerShareScroll", shareFrame, "UIPanelScrollFrameTemplate")
 	shareScroll:SetPoint("TOPLEFT", 12, -32)
-	shareScroll:SetPoint("BOTTOMRIGHT", -32, 44)
+	shareScroll:SetPoint("BOTTOMRIGHT", -32, 60)
 	local shareEdit = CreateFrame("EditBox", nil, shareScroll)
 	shareEdit:SetMultiLine(true)
 	shareEdit:SetAutoFocus(false)
@@ -1723,22 +1970,39 @@ local function BuildUI()
 		shareEdit:HighlightText()
 	end)
 
-	local importStrBtn = CreateFrame("Button", nil, shareFrame, "UIPanelButtonTemplate")
-	importStrBtn:SetSize(120, 22)
-	importStrBtn:SetPoint("LEFT", exportBtn, "RIGHT", 8, 0)
-	importStrBtn:SetText("Import from text")
-	importStrBtn:SetScript("OnClick", function()
+	local function ReadImport()
 		local entries, countOrErr = ParsePlan(shareEdit:GetText())
 		if not entries then
 			Print(countOrErr)
 			return
 		end
 		pendingImport = entries
-		StaticPopup_Show("ACTIONBARPLANNER_IMPORTPLAN", countOrErr)
+		return countOrErr
+	end
+
+	local importNewBtn = CreateFrame("Button", nil, shareFrame, "UIPanelButtonTemplate")
+	importNewBtn:SetSize(120, 22)
+	importNewBtn:SetPoint("LEFT", exportBtn, "RIGHT", 8, 0)
+	importNewBtn:SetText("Import as New")
+	importNewBtn:SetScript("OnClick", function()
+		if ReadImport() then
+			StaticPopup_Show("ACTIONBARPLANNER_IMPORTNEW", nil, nil, {default = UniqueName("Imported")})
+		end
+	end)
+
+	local importStrBtn = CreateFrame("Button", nil, shareFrame, "UIPanelButtonTemplate")
+	importStrBtn:SetSize(120, 22)
+	importStrBtn:SetPoint("LEFT", importNewBtn, "RIGHT", 8, 0)
+	importStrBtn:SetText("Import & Replace")
+	importStrBtn:SetScript("OnClick", function()
+		local count = ReadImport()
+		if count then
+			StaticPopup_Show("ACTIONBARPLANNER_IMPORTPLAN", count)
+		end
 	end)
 
 	local shareHint = shareFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-	shareHint:SetPoint("LEFT", importStrBtn, "RIGHT", 8, 0)
+	shareHint:SetPoint("BOTTOMLEFT", exportBtn, "TOPLEFT", 2, 8)
 	shareHint:SetText("|cff909090Ctrl-C to copy, Ctrl-V to paste|r")
 
 	cursorFrame = CreateFrame("Frame", nil, UIParent)
@@ -1911,13 +2175,6 @@ local function CreateOptionsPanel()
 	end
 end
 
-local function MigrateDB()
-	for slot, e in pairs(db.plan) do
-		if type(e) == "number" then
-			db.plan[slot] = {t = "spell", id = e}
-		end
-	end
-end
 
 SLASH_ACTIONBARPLANNER1 = "/abp"
 SLASH_ACTIONBARPLANNER2 = "/actionbarplanner"
@@ -1958,12 +2215,11 @@ events:SetScript("OnEvent", function(_, event, arg1)
 		if arg1 == ADDON_NAME then
 			ActionBarPlannerDB = ActionBarPlannerDB or {}
 			db = ActionBarPlannerDB
-			db.plan = db.plan or {}
 			db.hidden = db.hidden or {}
 			db.minimap = db.minimap or {hide = false, angle = 220}
-			MigrateDB()
 		end
 	elseif event == "PLAYER_LOGIN" then
+		SetupProfiles()
 		BuildBars()
 		BuildClassSpells()
 		RequestSpellData()
