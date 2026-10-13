@@ -837,12 +837,7 @@ local function ReadSlot(slot)
 	end
 end
 
-local function ReplaceBars()
-	if InCombatLockdown() then
-		Print("Can't rearrange bars in combat.")
-		return
-	end
-	local places, clears = PlanReplace()
+local function SnapshotBars()
 	local snapshot = {}
 	for _, bar in ipairs(BARS) do
 		for i = 1, 12 do
@@ -855,7 +850,16 @@ local function ReplaceBars()
 			end
 		end
 	end
-	db.snapshot = snapshot
+	return snapshot
+end
+
+local function ReplaceBars()
+	if InCombatLockdown() then
+		Print("Can't rearrange bars in combat.")
+		return
+	end
+	local places, clears = PlanReplace()
+	db.snapshot = SnapshotBars()
 	local cleared, placed = 0, 0
 	for _, slot in ipairs(clears) do
 		if ClearSlot(slot) then
@@ -871,7 +875,7 @@ local function ReplaceBars()
 	QueueRefresh()
 end
 
-local function UndoReplace()
+local function UndoBars()
 	if not db.snapshot then
 		return
 	end
@@ -901,6 +905,7 @@ local function ApplyAll(silent)
 		end
 		return
 	end
+	local snapshot = SnapshotBars()
 	local placed = 0
 	for _, bar in ipairs(BARS) do
 		for i = 1, 12 do
@@ -910,6 +915,7 @@ local function ApplyAll(silent)
 		end
 	end
 	if placed > 0 then
+		db.snapshot = snapshot
 		Print("Placed " .. placed .. " planned action(s) onto your bars.")
 	elseif not silent then
 		Print("Nothing to place — bars already match your plan (items must be in your bags).")
@@ -1483,7 +1489,7 @@ local function BuildUI()
 			enabled = function()
 				return db.snapshot ~= nil
 			end,
-			run = UndoReplace,
+			run = UndoBars,
 		},
 	}
 	placeMenu.items = {}
