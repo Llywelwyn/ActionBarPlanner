@@ -2,7 +2,7 @@
 ## Title: Action Bar Planner
 ## Notes: Plan your max-level action bars before you get there. Open with /abp or the minimap button.
 ## Author: Lly
-## Version: 2.2.0
+## Version: 2.3.0
 ## IconTexture: Interface\Icons\INV_Misc_Book_09
 ## AddonCompartmentFunc: ActionBarPlanner_CompartmentClick
 ## SavedVariablesPerCharacter: ActionBarPlannerDB
