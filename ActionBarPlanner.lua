@@ -10,10 +10,24 @@ local BAR_DEFS = {
 	{binding = "MULTIACTIONBAR6BUTTON%d", offset = 156, button = "MultiBar6Button%d", container = "MultiBar6"},
 	{binding = "MULTIACTIONBAR7BUTTON%d", offset = 168, button = "MultiBar7Button%d", container = "MultiBar7"},
 }
+local FORM_BARS = {
+	DRUID = {
+		{label = "Cat Form", offset = 72},
+		{label = "Bear Form", offset = 96},
+	},
+	WARRIOR = {
+		{label = "Battle", offset = 72},
+		{label = "Defensive", offset = 84},
+		{label = "Berserker", offset = 96},
+	},
+	ROGUE = {
+		{label = "Stealth", offset = 72},
+	},
+}
 local BARS = {}
 
 local function IsBarEnabled(bar)
-	if bar.index == 1 then
+	if bar.index == 1 or bar.form then
 		return true
 	end
 	local toggles = {GetActionBarToggles()}
@@ -104,7 +118,25 @@ local function BuildBars()
 			def.label = "Action Bar " .. i
 			tinsert(BARS, def)
 		end
+		if i == 1 then
+			local _, class = UnitClass("player")
+			for _, form in ipairs(FORM_BARS[class] or {}) do
+				form.binding = def.binding
+				form.button = def.button
+				form.form = true
+				tinsert(BARS, form)
+			end
+		end
 	end
+end
+
+local function MainBarOffset()
+	local page = GetActionBarPage and GetActionBarPage() or 1
+	local bonus = GetBonusBarOffset and GetBonusBarOffset() or 0
+	if page == 1 and bonus > 0 then
+		return ((NUM_ACTIONBAR_PAGES or 6) + bonus - 1) * 12
+	end
+	return (page - 1) * 12
 end
 
 local function BuildClassSpells()
@@ -403,10 +435,12 @@ local function SetHeldKey(key)
 end
 
 local function UpdatePreview()
+	local mainOffset = MainBarOffset()
 	for _, bar in ipairs(BARS) do
+		local visible = bar.binding ~= "ACTIONBUTTON%d" or bar.offset == mainOffset
 		for i = 1, 12 do
 			local slot = bar.offset + i
-			local e = db.plan[slot]
+			local e = visible and db.plan[slot]
 			local differs = db.preview and e and not EntryMatchesSlot(e, slot)
 			local match = db.preview and e and MatchesSearch(e)
 			local ov = overlays[slot]
@@ -1896,6 +1930,8 @@ events:RegisterEvent("SPELLS_CHANGED")
 events:RegisterEvent("ACTIONBAR_SLOT_CHANGED")
 events:RegisterEvent("UPDATE_MACROS")
 events:RegisterEvent("PLAYER_REGEN_ENABLED")
+events:RegisterEvent("UPDATE_BONUS_ACTIONBAR")
+events:RegisterEvent("ACTIONBAR_PAGE_CHANGED")
 pcall(events.RegisterEvent, events, "ITEM_DATA_LOAD_RESULT")
 pcall(events.RegisterEvent, events, "GET_ITEM_INFO_RECEIVED")
 events:SetScript("OnEvent", function(_, event, arg1)
