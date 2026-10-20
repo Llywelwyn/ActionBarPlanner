@@ -9,7 +9,7 @@ TABLES = ["SkillLineAbility", "SkillLine", "SpellLevels", "SpellMisc", "SpellNam
 ATTR0_PASSIVE = 0x40
 ATTR0_HIDDEN = 0x80
 SKILL_CATEGORIES = {"7", "9"}
-EXCLUDED_LINE_NAMES = {"Engraving"}
+EXCLUDED_LINE_NAMES = {"Engraving", "Beast Training"}
 DENY_NAMES = {
     "Chilled",
     "Frostbite",
@@ -22,9 +22,13 @@ DENY_NAMES = {
     "Unbridled Wrath",
     "Charge Rage Bonus Effect",
     "Lightwell Renew",
+    "Study",
 }
 ACQUIRE_RUNE = "3"
 ALLOW_LEVELS = {1296017: 6}
+CLASS_MASK_OVERRIDES = {5784: 256, 23161: 256}
+PRE_SOD_BUILD = "1.14.4.51829"
+SOD_BUILD = "1.15.9.70003"
 
 
 def detect_build():
@@ -46,7 +50,11 @@ def load(table, build, cache):
     if not os.path.exists(path):
         url = f"https://wago.tools/db2/{table}/csv?build={build}"
         print(f"fetching {url}")
-        urllib.request.urlretrieve(url, path)
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req) as resp:
+            body = resp.read()
+        with open(path, "wb") as f:
+            f.write(body)
     return list(csv.DictReader(open(path, encoding="utf-8")))
 
 
@@ -67,11 +75,16 @@ def build_data(build, cache):
         if r["DifficultyID"] == "0":
             attr0[int(r["SpellID"])] = int(r["Attributes_0"])
 
-    levels = {}
+    base_levels = {}
+    spell_levels = {}
     for r in t["SpellLevels"]:
         if r["DifficultyID"] == "0":
-            levels[int(r["SpellID"])] = int(r["BaseLevel"])
-    levels.update(ALLOW_LEVELS)
+            base_levels[int(r["SpellID"])] = int(r["BaseLevel"])
+            spell_levels[int(r["SpellID"])] = int(r["SpellLevel"])
+    base_levels.update(ALLOW_LEVELS)
+
+    pre_sod = {int(r["ID"]) for r in load("SpellName", PRE_SOD_BUILD, cache)}
+    sod = {int(r["ID"]) for r in load("SpellName", SOD_BUILD, cache)} - pre_sod
 
     talent_ids = {int(r["SpellID"]) for r in t["TraitDefinition"] if r["SpellID"] not in ("", "0")}
 
@@ -81,12 +94,17 @@ def build_data(build, cache):
         line_masks[r["SkillLine"]] = line_masks.get(r["SkillLine"], 0) | int(r["ClassMask"])
 
     data = {token: {} for token in class_tokens.values()}
-    skipped = {"passive": 0, "unnamed": 0, "no-level": 0, "denied": 0, "no-class": 0, "rune": 0}
+    skipped = {"passive": 0, "unnamed": 0, "no-level": 0, "denied": 0, "no-class": 0, "rune": 0, "sod": 0}
     for r in rows:
         spell_id = int(r["Spell"])
-        class_mask = int(r["ClassMask"])
-        if r["AcquireMethod"] == ACQUIRE_RUNE:
+        talent = spell_id in talent_ids
+        class_mask = int(r["ClassMask"]) or CLASS_MASK_OVERRIDES.get(spell_id, 0)
+        explicit_class = class_mask != 0
+        if r["AcquireMethod"] == ACQUIRE_RUNE and not talent:
             skipped["rune"] += 1
+            continue
+        if spell_id in sod and not talent and (base_levels.get(spell_id) or 0) < 1:
+            skipped["sod"] += 1
             continue
         if class_mask == 0:
             line_mask = line_masks[r["SkillLine"]]
@@ -105,7 +123,10 @@ def build_data(build, cache):
         if attr0.get(spell_id, 0) & (ATTR0_PASSIVE | ATTR0_HIDDEN):
             skipped["passive"] += 1
             continue
-        if (levels.get(spell_id) or 0) < 1:
+        level = base_levels.get(spell_id) or 0
+        if level < 1 and explicit_class:
+            level = spell_levels.get(spell_id) or 0
+        if level < 1:
             skipped["no-level"] += 1
             continue
         race_mask = int(r["RaceMasks_0"])
@@ -114,7 +135,6 @@ def build_data(build, cache):
             races = sorted(rid for rid in playable_races if race_mask & (1 << (rid - 1)))
             if not races:
                 continue
-        level = levels[spell_id]
         for class_id, token in class_tokens.items():
             if class_mask & (1 << (class_id - 1)):
                 cur = data[token].get(spell_id)
@@ -123,7 +143,7 @@ def build_data(build, cache):
                         "id": spell_id,
                         "level": level,
                         "races": races,
-                        "talent": spell_id in talent_ids,
+                        "talent": talent,
                     }
 
     print("skipped:", skipped)
