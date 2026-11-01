@@ -5,7 +5,7 @@ import re
 import sys
 import urllib.request
 
-TABLES = ["SkillLineAbility", "SkillLine", "SpellLevels", "SpellMisc", "SpellName", "ChrClasses", "ChrRaces", "TraitDefinition"]
+TABLES = ["SkillLineAbility", "SkillLine", "SpellLevels", "SpellMisc", "SpellName", "ChrClasses", "ChrRaces", "TraitDefinition", "Talent"]
 ATTR0_PASSIVE = 0x40
 ATTR0_HIDDEN = 0x80
 SKILL_CATEGORIES = {"7", "9"}
@@ -87,6 +87,12 @@ def build_data(build, cache):
     sod = {int(r["ID"]) for r in load("SpellName", SOD_BUILD, cache)} - pre_sod
 
     talent_ids = {int(r["SpellID"]) for r in t["TraitDefinition"] if r["SpellID"] not in ("", "0")}
+    talent_levels = {}
+    for r in t["Talent"]:
+        for i in range(9):
+            rank_id = int(r.get(f"SpellRank_{i}") or 0)
+            if rank_id:
+                talent_levels[rank_id] = 10 + 5 * int(r["TierID"])
 
     rows = [r for r in t["SkillLineAbility"] if r["SkillLine"] in class_lines]
     line_masks = {}
@@ -126,6 +132,8 @@ def build_data(build, cache):
         level = base_levels.get(spell_id) or 0
         if level < 1 and explicit_class:
             level = spell_levels.get(spell_id) or 0
+        if level < 1 and talent:
+            level = talent_levels.get(spell_id) or spell_levels.get(spell_id) or 10
         if level < 1:
             skipped["no-level"] += 1
             continue
