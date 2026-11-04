@@ -32,11 +32,12 @@ SOD_BUILD = "1.15.9.70003"
 
 
 def detect_build():
-    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "..", ".build.info")
+    wow_dir = os.environ.get("WOW_DIR") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "..")
+    path = os.path.join(wow_dir, ".build.info")
     try:
         for line in open(path):
             fields = line.rstrip("\n").split("|")
-            if fields and fields[-1] == "wow_classic_beta":
+            if fields and fields[-1] == "wowf":
                 for f in fields:
                     if re.fullmatch(r"\d+\.\d+\.\d+\.\d+", f):
                         return f
