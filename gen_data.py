@@ -63,7 +63,7 @@ def build_data(build, cache):
     t = {name: load(name, build, cache) for name in TABLES}
 
     class_tokens = {int(r["ID"]): r["Filename"].upper() for r in t["ChrClasses"]}
-    playable_races = {int(r["ID"]) for r in t["ChrRaces"]}
+    race_bits = {int(r["ID"]): int(r["PlayableRaceBit"]) for r in t["ChrRaces"] if int(r["PlayableRaceBit"]) >= 0}
     names = {int(r["ID"]): r["Name_lang"] for r in t["SpellName"]}
     class_lines = {
         r["ID"]
@@ -138,10 +138,10 @@ def build_data(build, cache):
         if level < 1:
             skipped["no-level"] += 1
             continue
-        race_mask = int(r["RaceMasks_0"])
+        race_mask = (int(r["RaceMasks_0"]) & 0xFFFFFFFF) | (int(r["RaceMasks_1"]) & 0xFFFFFFFF) << 32
         races = None
         if race_mask:
-            races = sorted(rid for rid in playable_races if race_mask & (1 << (rid - 1)))
+            races = sorted(rid for rid, bit in race_bits.items() if race_mask & (1 << bit))
             if not races:
                 continue
         for class_id, token in class_tokens.items():
