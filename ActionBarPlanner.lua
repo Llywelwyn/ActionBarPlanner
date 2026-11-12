@@ -241,20 +241,16 @@ local function ResolveSpell(e)
 	if e.exact then
 		return IsKnown(e.id) and e.id or nil
 	end
-	if IsKnown(e.id) then
-		return e.id
-	end
 	local name = GetName(e.id)
-	if not name then
-		return nil
-	end
 	local best, bestLevel
-	for _, s in ipairs(classSpells) do
-		if GetName(s.id) == name and IsKnown(s.id) and (not bestLevel or s.level > bestLevel) then
-			best, bestLevel = s.id, s.level
+	if name then
+		for _, s in ipairs(classSpells) do
+			if GetName(s.id) == name and IsKnown(s.id) and (not bestLevel or s.level > bestLevel) then
+				best, bestLevel = s.id, s.level
+			end
 		end
 	end
-	return best
+	return best or (IsKnown(e.id) and e.id or nil)
 end
 
 local function FindMacroIndex(e)
